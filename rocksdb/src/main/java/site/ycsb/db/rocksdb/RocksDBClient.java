@@ -52,6 +52,7 @@ public class RocksDBClient extends DB {
   @GuardedBy("RocksDBClient.class") private static Path optionsFile = null;
   @GuardedBy("RocksDBClient.class") private static RocksObject dbOptions = null;
   @GuardedBy("RocksDBClient.class") private static RocksDB rocksDb = null;
+  @GuardedBy("RocksDBClient.class") private static TransactionDB transactionDb = null;
   @GuardedBy("RocksDBClient.class") private static int references = 0;
 
   private static final ConcurrentMap<String, ColumnFamily> COLUMN_FAMILIES = new ConcurrentHashMap<>();
@@ -60,7 +61,8 @@ public class RocksDBClient extends DB {
   @Override
   public void init() throws DBException {
     synchronized(RocksDBClient.class) {
-      if(rocksDb == null) {
+      // if(rocksDb == null) {
+      if(transactionDb == null) {
         rocksDbDir = Paths.get(getProperties().getProperty(PROPERTY_ROCKSDB_DIR));
         LOGGER.info("RocksDB data dir: " + rocksDbDir);
 
@@ -72,13 +74,19 @@ public class RocksDBClient extends DB {
 
         try {
           if (optionsFile != null) {
-            rocksDb = initRocksDBWithOptionsFile();
+            // rocksDb = initRocksDBWithOptionsFile();
           } else {
-            rocksDb = initRocksDB();
+            // rocksDb = initRocksDB();
+            transactionDb = initTransactionDB();
           }
         } catch (final IOException | RocksDBException e) {
           throw new DBException(e);
         }
+      }
+
+      // Throw an error if we didn't init.
+      if (transactionDb == null) {
+        throw new DBException();
       }
 
       references++;
@@ -116,6 +124,80 @@ public class RocksDBClient extends DB {
     }
 
     return db;
+  }
+
+  /**
+   * Initializes and opens the **Transaction-Enabled** RocksDB database.
+   *
+   * Should only be called with a {@code synchronized(RocksDBClient.class)` block}.
+   *
+   * @return The initialized and open RocksDB instance.
+   */
+  private TransactionDB initTransactionDB() throws IOException, RocksDBException {
+    if(!Files.exists(rocksDbDir)) {
+      Files.createDirectories(rocksDbDir);
+    }
+
+    final List<String> cfNames = loadColumnFamilyNames();
+    final List<ColumnFamilyOptions> cfOptionss = new ArrayList<>();
+    final List<ColumnFamilyDescriptor> cfDescriptors = new ArrayList<>();
+
+    for(final String cfName : cfNames) {
+      final ColumnFamilyOptions cfOptions = new ColumnFamilyOptions()
+          .optimizeLevelStyleCompaction();
+      final ColumnFamilyDescriptor cfDescriptor = new ColumnFamilyDescriptor(
+          cfName.getBytes(UTF_8),
+          cfOptions
+      );
+      cfOptionss.add(cfOptions);
+      cfDescriptors.add(cfDescriptor);
+    }
+
+    final int rocksThreads = Runtime.getRuntime().availableProcessors() * 2;
+
+    if(cfDescriptors.isEmpty()) {
+      final Options options = new Options()
+          .optimizeLevelStyleCompaction()
+          .setCreateIfMissing(true)
+          .setCreateMissingColumnFamilies(true)
+          .setIncreaseParallelism(rocksThreads)
+          .setMaxBackgroundCompactions(rocksThreads)
+          .setInfoLogLevel(InfoLogLevel.INFO_LEVEL);
+      dbOptions = options;
+
+      final TransactionDBOptions txOptions = new TransactionDBOptions()
+          .setNumStripes(16)
+          .setMaxNumLocks(-1)
+          .setTransactionLockTimeout(1000)  // 1000ms == 1s
+          .setDefaultLockTimeout(1000);
+          // .setWritePolicy
+          
+      return TransactionDB.open(options, txOptions, rocksDbDir.toAbsolutePath().toString());
+    } else {
+      final DBOptions options = new DBOptions()
+          .setCreateIfMissing(true)
+          .setCreateMissingColumnFamilies(true)
+          .setIncreaseParallelism(rocksThreads)
+          .setMaxBackgroundCompactions(rocksThreads)
+          .setInfoLogLevel(InfoLogLevel.INFO_LEVEL);
+      dbOptions = options;
+
+      final TransactionDBOptions txOptions = new TransactionDBOptions()
+          .setNumStripes(16)
+          .setMaxNumLocks(-1)
+          .setTransactionLockTimeout(1000)  // 1000ms == 1s
+          .setDefaultLockTimeout(1000);
+          // .setWritePolicy
+
+      final List<ColumnFamilyHandle> cfHandles = new ArrayList<>();
+      final TransactionDB txDb = TransactionDB.open(options, txOptions, rocksDbDir.toAbsolutePath().toString(),  
+                                                    cfDescriptors, cfHandles);
+      // final RocksDB db = RocksDB.open(options, rocksDbDir.toAbsolutePath().toString(), cfDescriptors, cfHandles);
+      for(int i = 0; i < cfNames.size(); i++) {
+        COLUMN_FAMILIES.put(cfNames.get(i), new ColumnFamily(cfHandles.get(i), cfOptionss.get(i)));
+      }
+      return txDb;
+    }
   }
 
   /**
@@ -186,8 +268,15 @@ public class RocksDBClient extends DB {
             cf.getHandle().close();
           }
 
-          rocksDb.close();
-          rocksDb = null;
+          if (transactionDb != null) {
+            transactionDb.close();
+            transactionDb = null;
+          }
+
+          if (rocksDb != null) {
+            rocksDb.close();
+            rocksDb = null;
+          }
 
           dbOptions.close();
           dbOptions = null;
@@ -218,8 +307,12 @@ public class RocksDBClient extends DB {
       }
 
       final ColumnFamilyHandle cf = COLUMN_FAMILIES.get(table).getHandle();
-      final byte[] values = rocksDb.get(cf, key.getBytes(UTF_8));
-      if(values == null) {
+
+      // Perform read outside of transaction.
+      final ReadOptions readOptions = new ReadOptions();
+      final byte[] values = transactionDb.get(cf, readOptions, key.getBytes(UTF_8));
+
+      if (values == null) {
         return Status.NOT_FOUND;
       }
       deserializeValues(values, fields, result);
@@ -268,20 +361,30 @@ public class RocksDBClient extends DB {
 
       final ColumnFamilyHandle cf = COLUMN_FAMILIES.get(table).getHandle();
       final Map<String, ByteIterator> result = new HashMap<>();
-      final byte[] currentValues = rocksDb.get(cf, key.getBytes(UTF_8));
+
+      // Begin transaction-specific logic
+      final ReadOptions readOptions = new ReadOptions();
+      final WriteOptions writeOptions = new WriteOptions();
+      final Transaction txn = transactionDb.beginTransaction(writeOptions);
+
+      // Read the current value.
+      final byte[] currentValues = txn.getForUpdate(readOptions, cf, key.getBytes(UTF_8), true, true);
+
       if(currentValues == null) {
         return Status.NOT_FOUND;
       }
       deserializeValues(currentValues, null, result);
 
-      //update
+      // Update the values
       result.putAll(values);
 
-      //store
-      rocksDb.put(cf, key.getBytes(UTF_8), serializeValues(result));
+      // Insert updated value.
+      txn.put(cf, key.getBytes(UTF_8), serializeValues(result));
+
+      // Commit the transaction
+      txn.commit();
 
       return Status.OK;
-
     } catch(final RocksDBException | IOException e) {
       LOGGER.error(e.getMessage(), e);
       return Status.ERROR;
