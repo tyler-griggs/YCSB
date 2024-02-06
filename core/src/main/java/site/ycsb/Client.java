@@ -349,16 +349,30 @@ public final class Client {
 
       opsDone = 0;
 
+      int[] opsDoneResults = new int[threads.size()];
       for (Map.Entry<Thread, ClientThread> entry : threads.entrySet()) {
         try {
           entry.getKey().join();
-          opsDone += entry.getValue().getOpsDone();
+          int threadIdx = entry.getValue().getThreadId();
+          int threadOpsDone = entry.getValue().getOpsDone();
+          
+          System.out.println("Client " + threadIdx + " target ops/s: " + 1000.0 * entry.getValue().getTargetOpsPerMs());
+
+          opsDoneResults[threadIdx] = threadOpsDone;
+          opsDone += threadOpsDone;
         } catch (InterruptedException ignored) {
           // ignored
         }
       }
 
       en = System.currentTimeMillis();
+
+      for (int i = 0; i < opsDoneResults.length; i++) {
+        System.out.println("Client " + i + " ops/s: " + 1000.0 * opsDoneResults[i] / (en - st));
+      }
+
+      // double throughput = 1000.0 * (opcount) / (runtime);
+
     }
 
     try {
@@ -439,8 +453,17 @@ public final class Client {
           ++threadopcount;
         }
 
-        ClientThread t = new ClientThread(db, dotransactions, workload, props, threadopcount, targetperthreadperms,
-            completeLatch);
+        int updatedThreadopcount = threadopcount;
+        double updatedTargetperthreadperms = targetperthreadperms;
+        // Bad client is threadid == 0
+        if (threadid == 0) {
+          int badMultiplier = 100;
+          updatedThreadopcount = badMultiplier * threadopcount;
+          updatedTargetperthreadperms = badMultiplier * targetperthreadperms;
+        }
+        System.out.println("[TGRIGGS] Client " + threadid + " rate: " + updatedTargetperthreadperms);
+        ClientThread t = new ClientThread(db, dotransactions, workload, props, 
+                          updatedThreadopcount, updatedTargetperthreadperms, completeLatch);
         t.setThreadId(threadid);
         t.setThreadCount(threadcount);
         clients.add(t);

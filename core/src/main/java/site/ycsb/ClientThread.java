@@ -18,10 +18,14 @@
 package site.ycsb;
 
 import site.ycsb.measurements.Measurements;
+// import site.ycsb.measurements.exporter.MeasurementsExporter;
+// import site.ycsb.measurements.exporter.TextMeasurementsExporter;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.LockSupport;
+// import java.io.OutputStream;
+// import java.io.IOException;
 
 /**
  * A thread for executing transactions or data inserts to the database.
@@ -75,6 +79,14 @@ public class ClientThread implements Runnable {
 
   public void setThreadId(final int threadId) {
     threadid = threadId;
+  }
+
+  public int getThreadId() {
+    return threadid;
+  }
+
+  public double getTargetOpsPerMs() {
+    return targetOpsPerMs;
   }
 
   public void setThreadCount(final int threadCount) {
@@ -146,6 +158,18 @@ public class ClientThread implements Runnable {
       e.printStackTrace(System.out);
       System.exit(0);
     }
+
+    // OutputStream out = System.out;
+    // MeasurementsExporter exporter = null;
+    // try {
+    //   exporter = new TextMeasurementsExporter(out);
+    //   exporter.write("TGRIGGS", "Total ops", opsdone);
+    // } catch (IOException e) {
+    //   e.printStackTrace();
+    // }
+    // if (threadid == 0) {
+    //   System.out.printf("Bad client did %d total ops", opsdone);
+    // }
 
     try {
       measurements.setIntendedStartTimeNs(0);

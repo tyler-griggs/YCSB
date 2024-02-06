@@ -171,7 +171,7 @@ public class RocksDBClient extends DB {
           .setTransactionLockTimeout(1000)  // 1000ms == 1s
           .setDefaultLockTimeout(1000);
           // .setWritePolicy
-          
+
       return TransactionDB.open(options, txOptions, rocksDbDir.toAbsolutePath().toString());
     } else {
       final DBOptions options = new DBOptions()
