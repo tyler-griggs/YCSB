@@ -316,7 +316,7 @@ public final class Client {
       if (props.getProperty(Measurements.MEASUREMENT_TYPE_PROPERTY, "").compareTo("timeseries") == 0) {
         standardstatus = true;
       }
-      int statusIntervalSeconds = Integer.parseInt(props.getProperty("status.interval", "10"));
+      int statusIntervalSeconds = Integer.parseInt(props.getProperty("status.interval", "2"));
       boolean trackJVMStats = props.getProperty(Measurements.MEASUREMENT_TRACK_JVM_PROPERTY,
           Measurements.MEASUREMENT_TRACK_JVM_PROPERTY_DEFAULT).equals("true");
       statusthread = new StatusThread(completeLatch, clients, label, standardstatus, statusIntervalSeconds,
@@ -368,7 +368,7 @@ public final class Client {
       en = System.currentTimeMillis();
 
       for (int i = 0; i < opsDoneResults.length; i++) {
-        System.out.println("Client " + i + " ops/s: " + 1000.0 * opsDoneResults[i] / (en - st));
+        System.out.println("[TGRIGGS] Client " + i + " ops/s: " + 1000.0 * opsDoneResults[i] / (en - st));
       }
 
       // double throughput = 1000.0 * (opcount) / (runtime);
@@ -456,12 +456,12 @@ public final class Client {
         int updatedThreadopcount = threadopcount;
         double updatedTargetperthreadperms = targetperthreadperms;
         // Bad client is threadid == 0
-        if (threadid == 0) {
-          int badMultiplier = 100;
-          updatedThreadopcount = badMultiplier * threadopcount;
-          updatedTargetperthreadperms = badMultiplier * targetperthreadperms;
-        }
-        System.out.println("[TGRIGGS] Client " + threadid + " rate: " + updatedTargetperthreadperms);
+        // if (threadid == 0) {
+        //   int badMultiplier = 4;
+        //   updatedThreadopcount = badMultiplier * threadopcount;
+        //   updatedTargetperthreadperms = badMultiplier * targetperthreadperms;
+        // }
+        System.out.println("[TGRIGGS] Client " + threadid + " target ops/ms: " + updatedTargetperthreadperms);
         ClientThread t = new ClientThread(db, dotransactions, workload, props, 
                           updatedThreadopcount, updatedTargetperthreadperms, completeLatch);
         t.setThreadId(threadid);

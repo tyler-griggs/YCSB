@@ -24,6 +24,7 @@ import org.rocksdb.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.file.*;
@@ -32,6 +33,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+
+import java.io.FileWriter;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -51,6 +57,7 @@ public class RocksDBClient extends DB {
   @GuardedBy("RocksDBClient.class") private static Path rocksDbDir = null;
   @GuardedBy("RocksDBClient.class") private static Path optionsFile = null;
   @GuardedBy("RocksDBClient.class") private static RocksObject dbOptions = null;
+  @GuardedBy("RocksDBClient.class") private static Statistics dbStats = null;
   @GuardedBy("RocksDBClient.class") private static RocksDB rocksDb = null;
   @GuardedBy("RocksDBClient.class") private static TransactionDB transactionDb = null;
   @GuardedBy("RocksDBClient.class") private static int references = 0;
@@ -155,6 +162,14 @@ public class RocksDBClient extends DB {
 
     final int rocksThreads = Runtime.getRuntime().availableProcessors() * 2;
 
+
+
+    // Create RocksDB statistics object
+    final Statistics stats = new Statistics();
+    stats.setStatsLevel(StatsLevel.ALL);  // all stats
+      // stats.setStatsLevel(StatsLevel.EXCEPT_DETAILED_TIMERS);
+    dbStats = stats;
+
     if(cfDescriptors.isEmpty()) {
       final Options options = new Options()
           .optimizeLevelStyleCompaction()
@@ -162,7 +177,8 @@ public class RocksDBClient extends DB {
           .setCreateMissingColumnFamilies(true)
           .setIncreaseParallelism(rocksThreads)
           .setMaxBackgroundCompactions(rocksThreads)
-          .setInfoLogLevel(InfoLogLevel.INFO_LEVEL);
+          .setInfoLogLevel(InfoLogLevel.INFO_LEVEL)
+          .setStatistics(dbStats);
       dbOptions = options;
 
       final TransactionDBOptions txOptions = new TransactionDBOptions()
@@ -179,7 +195,8 @@ public class RocksDBClient extends DB {
           .setCreateMissingColumnFamilies(true)
           .setIncreaseParallelism(rocksThreads)
           .setMaxBackgroundCompactions(rocksThreads)
-          .setInfoLogLevel(InfoLogLevel.INFO_LEVEL);
+          .setInfoLogLevel(InfoLogLevel.INFO_LEVEL)
+          .setStatistics(dbStats);
       dbOptions = options;
 
       final TransactionDBOptions txOptions = new TransactionDBOptions()
@@ -259,6 +276,25 @@ public class RocksDBClient extends DB {
 
   @Override
   public void cleanup() throws DBException {
+
+    DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH:mm:ss");
+    LocalDateTime now = LocalDateTime.now();
+    String formattedDate = dtf.format(now);
+
+    // Step 3: Define the file name with the formatted timestamp
+    String statsFileName = "stats/stats_" + formattedDate + ".txt";
+
+    try {
+      FileWriter statsFileWriter = new FileWriter(statsFileName);
+      statsFileWriter.write(dbStats.toString());
+      statsFileWriter.close();
+      System.out.println("Wrote stats to file:: " + statsFileName);
+      // System.out.println("[STATS]  \n" + dbStats.toString());
+    } catch (IOException e) {
+      System.out.println("Stats file write failed");
+      e.printStackTrace();
+    }
+
     super.cleanup();
 
     synchronized (RocksDBClient.class) {

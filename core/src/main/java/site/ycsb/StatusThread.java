@@ -148,13 +148,20 @@ public class StatusThread extends Thread {
     long todoops = 0;
 
     // Calculate the total number of operations completed.
+    int[] opsDoneResults = new int[clients.size()];
     for (ClientThread t : clients) {
       totalops += t.getOpsDone();
       todoops += t.getOpsTodo();
+      opsDoneResults[t.getThreadId()] = t.getOpsDone();
+    }
+
+    long interval = endIntervalMs - startTimeMs;
+    for (int i = 0; i < opsDoneResults.length; i++) {
+      System.out.println("[TGRIGGS] Client " + i + " cur ops/s: " 
+          + 1000.0 * (((double) opsDoneResults[i]) / (double) interval));
     }
 
 
-    long interval = endIntervalMs - startTimeMs;
     double throughput = 1000.0 * (((double) totalops) / (double) interval);
     double curthroughput = 1000.0 * (((double) (totalops - lastTotalOps)) /
         ((double) (endIntervalMs - startIntervalMs)));
